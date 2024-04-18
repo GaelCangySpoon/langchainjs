@@ -801,3 +801,69 @@ export class LatexTextSplitter
     });
   }
 }
+export interface RecursiveJsonSplitterParams extends TextSplitterParams {
+  maxChunkSize?: number;
+  minChunkSize?: number;
+}
+export class RecursiveJsonSplitter extends TextSplitter {
+  maxChunkSize: number;
+  minChunkSize: number;
+
+  constructor(fields?: Partial<RecursiveJsonSplitterParams>) {
+    super(fields);
+    this.maxChunkSize = fields?.maxChunkSize ?? this.chunkSize;
+    this.minChunkSize = fields?.minChunkSize ?? (this.maxChunkSize - 200 || 50);
+  }
+
+  jsonSize(data: object): number {
+    return JSON.stringify(data).length;
+  }
+
+  setNestedDict(target: any, path: string[], value: any): void {
+    for (let i = 0; i < path.length - 1; i++) {
+      const key = path[i];
+      if (!(key in target)) {
+        target[key] = {};
+      }
+      target = target[key];
+    }
+    target[path[path.length - 1]] = value;
+  }
+
+  jsonSplit(data: any, currentPath: string[] = [], chunks: any[] = []): any[] {
+    if (typeof data !== 'object' || data === null) {
+      this.setNestedDict(chunks[chunks.length - 1], currentPath, data);
+      return chunks;
+    }
+
+    for (const [key, value] of Object.entries(data)) {
+      const newPath = [...currentPath, key];
+      const chunkSize = this.jsonSize(chunks[chunks.length - 1]);
+      const size = this.jsonSize({ [key]: value });
+      const remaining = this.maxChunkSize - chunkSize;
+
+      if (size < remaining) {
+        this.setNestedDict(chunks[chunks.length - 1], newPath, value);
+      } else {
+        if (chunkSize >= this.chunkOverlap) {
+          chunks.push({});
+        }
+        this.jsonSplit(value, newPath, chunks);
+      }
+    }
+    return chunks;
+  }
+
+  splitJson(jsonData: any): any[] {
+    const chunks = this.jsonSplit(jsonData);
+    if (Object.keys(chunks[chunks.length - 1]).length === 0) {
+      chunks.pop();
+    }
+    return chunks;
+  }
+
+  async splitText(jsonData: any): Promise<string[]> {
+    const chunks = this.splitJson(jsonData);
+    return Promise.all(chunks.map(chunk => JSON.stringify(chunk)));
+  }
+}
